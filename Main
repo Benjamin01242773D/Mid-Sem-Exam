@@ -1,0 +1,326 @@
+// main.cpp
+#include <iostream>
+#include <fstream>
+#include <vector>
+#include <string>
+#include <algorithm>  // for find_if
+#include <iomanip>    // for formatting
+#include <sstream>    // for stringstream (useful for date/time)
+
+using namespace std;
+
+// ─── Student Class ───────────────────────────────────────────────
+class Student {
+public:
+    string indexNumber;
+    string name;
+
+    Student(string idx = "", string n = "") : indexNumber(idx), name(n) {}
+
+    void display() const {
+        cout << left << setw(15) << indexNumber << name << endl;
+    }
+
+    // For searching
+    bool operator==(const string& idx) const {
+        return indexNumber == idx;
+    }
+};
+
+// Global list of students
+vector<Student> students;
+
+// ─── Attendance Record (simple struct) ────────────────────────────
+struct AttendanceRecord {
+    string indexNumber;
+    char status;  // 'P' Present, 'A' Absent, 'L' Late
+};
+
+// ─── AttendanceSession Class ──────────────────────────────────────
+class AttendanceSession {
+public:
+    string courseCode;
+    string date;       // format: YYYY-MM-DD
+    string startTime;  // e.g. 08:00
+    int durationHours;
+
+    vector<AttendanceRecord> attendance;
+
+    AttendanceSession() : durationHours(0) {}
+
+    void displayHeader() const {
+        cout << "\nCourse: " << courseCode << " | Date: " << date
+             << " | Start: " << startTime << " | Duration: " << durationHours << " hrs\n";
+        cout << string(60, '-') << endl;
+        cout << left << setw(15) << "Index" << setw(10) << "Status" << endl;
+        cout << string(60, '-') << endl;
+    }
+
+    void display() const {
+        displayHeader();
+        for (const auto& rec : attendance) {
+            char stat = rec.status;
+            string statusStr = (stat == 'P') ? "Present" : (stat == 'A') ? "Absent" : "Late";
+            cout << left << setw(15) << rec.indexNumber << statusStr << endl;
+        }
+    }
+
+    void showSummary() const {
+        int p = 0, a = 0, l = 0;
+        for (const auto& r : attendance) {
+            if (r.status == 'P') p++;
+            else if (r.status == 'A') a++;
+            else if (r.status == 'L') l++;
+        }
+        cout << "\nSummary: Present = " << p << " | Absent = " << a << " | Late = " << l
+             << " | Total = " << (p + a + l) << endl;
+    }
+};
+
+// ─── Function Prototypes ──────────────────────────────────────────
+void loadStudents();
+void saveStudents();
+bool studentExists(const string& idx);
+void registerStudent();
+void viewAllStudents();
+Student* findStudent(const string& idx);
+
+void createSession(AttendanceSession& session);
+void markAttendance(AttendanceSession& session);
+void saveSession(const AttendanceSession& session);
+bool loadSession(AttendanceSession& session, const string& filename);
+
+void showMainMenu();
+
+// ─── Main ─────────────────────────────────────────────────────────
+int main() {
+    loadStudents();
+
+    int choice;
+    AttendanceSession currentSession;
+    bool hasActiveSession = false;
+
+    do {
+        showMainMenu();
+        cout << "\nEnter choice: ";
+        cin >> choice;
+        cin.ignore();  // clear newline
+
+        switch (choice) {
+            case 1:
+                registerStudent();
+                break;
+            case 2:
+                viewAllStudents();
+                break;
+            case 3: {
+                string idx;
+                cout << "Enter index number: ";
+                getline(cin, idx);
+                Student* s = findStudent(idx);
+                if (s) {
+                    cout << "Found: " << s->indexNumber << " - " << s->name << endl;
+                } else {
+                    cout << "Student not found.\n";
+                }
+                break;
+            }
+            case 4:
+                if (hasActiveSession) {
+                    cout << "Active session exists. Save or discard first.\n";
+                } else {
+                    createSession(currentSession);
+                    hasActiveSession = true;
+                }
+                break;
+            case 5:
+                if (!hasActiveSession) {
+                    cout << "No active session. Create one first.\n";
+                } else {
+                    markAttendance(currentSession);
+                }
+                break;
+            case 6:
+                if (hasActiveSession) {
+                    currentSession.display();
+                    currentSession.showSummary();
+                } else {
+                    cout << "No active session.\n";
+                }
+                break;
+            case 7:
+                if (hasActiveSession) {
+                    string filename = "session_" + currentSession.courseCode + "_" + currentSession.date + ".txt";
+                    saveSession(currentSession);
+                    cout << "Session saved to " << filename << endl;
+                    hasActiveSession = false;
+                }
+                break;
+            case 8:
+                // Bonus: load previous session (ask filename)
+                cout << "Feature coming soon - load previous session\n";
+                break;
+            case 0:
+                cout << "Exiting...\n";
+                break;
+            default:
+                cout << "Invalid choice!\n";
+        }
+    } while (choice != 0);
+
+    saveStudents();
+    return 0;
+}
+
+// ─── Menu ─────────────────────────────────────────────────────────
+void showMainMenu() {
+    cout << "\n=== Digital Attendance System ===\n"
+         << "1. Register new student\n"
+         << "2. View all students\n"
+         << "3. Search student by index\n"
+         << "4. Create new lecture session\n"
+         << "5. Mark attendance (current session)\n"
+         << "6. Show attendance list & summary\n"
+         << "7. Save current session\n"
+         << "8. Load previous session (TODO)\n"
+         << "0. Exit\n";
+}
+
+// ─── Student Management Functions ─────────────────────────────────
+void loadStudents() {
+    ifstream file("students.txt");
+    if (!file) return;
+
+    string line;
+    while (getline(file, line)) {
+        stringstream ss(line);
+        string idx, fname, lname;
+        ss >> idx;
+        getline(ss >> ws, fname);  // rest is name (may have spaces)
+        if (!idx.empty()) {
+            students.emplace_back(idx, fname);
+        }
+    }
+    file.close();
+}
+
+void saveStudents() {
+    ofstream file("students.txt");
+    if (!file) {
+        cout << "Error saving students!\n";
+        return;
+    }
+    for (const auto& s : students) {
+        file << s.indexNumber << " " << s.name << endl;
+    }
+    file.close();
+}
+
+bool studentExists(const string& idx) {
+    return findStudent(idx) != nullptr;
+}
+
+Student* findStudent(const string& idx) {
+    auto it = find_if(students.begin(), students.end(),
+                      [&idx](const Student& s) { return s == idx; });
+    return (it != students.end()) ? &(*it) : nullptr;
+}
+
+void registerStudent() {
+    string idx, name;
+    cout << "Enter index number: ";
+    getline(cin, idx);
+    if (studentExists(idx)) {
+        cout << "Index number already exists!\n";
+        return;
+    }
+    cout << "Enter full name: ";
+    getline(cin, name);
+
+    students.emplace_back(idx, name);
+    cout << "Student registered successfully.\n";
+}
+
+void viewAllStudents() {
+    if (students.empty()) {
+        cout << "No students registered yet.\n";
+        return;
+    }
+    cout << left << setw(15) << "Index Number" << "Name\n";
+    cout << string(40, '-') << endl;
+    for (const auto& s : students) {
+        s.display();
+    }
+}
+
+// ─── Session Functions (to be expanded in week 2–3) ───────────────
+void createSession(AttendanceSession& session) {
+    cout << "Enter course code (e.g. EEE227): ";
+    getline(cin, session.courseCode);
+
+    cout << "Enter date (YYYY-MM-DD): ";
+    getline(cin, session.date);
+
+    cout << "Enter start time (HH:MM): ";
+    getline(cin, session.startTime);
+
+    cout << "Enter duration in hours: ";
+    cin >> session.durationHours;
+    cin.ignore();
+
+    // Optional: pre-populate with all students as Absent
+    for (const auto& stu : students) {
+        session.attendance.push_back({stu.indexNumber, 'A'});
+    }
+    cout << "New session created. All students marked Absent by default.\n";
+}
+
+void markAttendance(AttendanceSession& session) {
+    string idx;
+    cout << "Enter student index number (or 'done' to finish): ";
+    while (getline(cin, idx)) {
+        if (idx == "done") break;
+        bool found = false;
+        for (auto& rec : session.attendance) {
+            if (rec.indexNumber == idx) {
+                char choice;
+                cout << "Mark (P = Present, A = Absent, L = Late): ";
+                cin >> choice;
+                cin.ignore();
+                choice = toupper(choice);
+                if (choice == 'P' || choice == 'A' || choice == 'L') {
+                    rec.status = choice;
+                    cout << "Updated.\n";
+                } else {
+                    cout << "Invalid status.\n";
+                }
+                found = true;
+                break;
+            }
+        }
+        if (!found) cout << "Student not in this session.\n";
+        cout << "\nNext student (or 'done'): ";
+    }
+}
+
+void saveSession(const AttendanceSession& session) {
+    string filename = "session_" + session.courseCode + "_" + session.date + ".txt";
+    ofstream file(filename);
+    if (!file) {
+        cout << "Cannot create session file!\n";
+        return;
+    }
+
+    file << "Course: " << session.courseCode << endl;
+    file << "Date: " << session.date << endl;
+    file << "Start: " << session.startTime << endl;
+    file << "Duration: " << session.durationHours << endl;
+    file << "---" << endl;
+
+    for (const auto& rec : session.attendance) {
+        file << rec.indexNumber << " " << rec.status << endl;
+    }
+    file.close();
+}
+
+// You can implement loadSession(...) similarly using ifstream and parsing
